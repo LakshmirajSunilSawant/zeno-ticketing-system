@@ -94,10 +94,13 @@ created_at            price                           status  CONFIRMED|MODIFIED
 
 ```bash
 python -m venv .venv && .venv/Scripts/activate      # Windows
-pip install -r requirements.txt
+pip install -r requirements-dev.txt                  # runtime deps + pytest/locust
 python seed.py                                       # creates admin + demo user + 4 events
 uvicorn app.main:app --reload
 ```
+
+> `requirements.txt` holds runtime dependencies only — that's what Render installs.
+> `requirements-dev.txt` adds pytest, httpx and locust. Production images shouldn't ship test tools.
 
 Open <http://127.0.0.1:8000/docs>. Seeded logins: `admin@zeno.dev / admin12345`, `demo@zeno.dev / demo12345`.
 

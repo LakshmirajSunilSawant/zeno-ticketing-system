@@ -14,7 +14,6 @@ psycopg2-binary~=2.9.10   # PostgreSQL driver (binary wheel = no compiler needed
 slowapi~=0.1.9            # rate limiting middleware
 structlog~=24.4.0         # structured JSON logging
 
-# --- dev / test only (installed on Render too; harmless and keeps one requirements file) ---
-pytest~=8.3.0
-httpx~=0.27.0             # test client transport for FastAPI TestClient + integration tests
-locust~=2.32.0            # load test to prove no overselling under concurrency
+# Test and load-testing tools live in requirements-dev.txt, NOT here. Production images should not
+# contain pytest or locust: they slow the build, enlarge the image, and widen the attack surface
+# for no runtime benefit.

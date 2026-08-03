@@ -1,0 +1,9 @@
+# Development and CI dependencies. Deliberately separate from requirements.txt so the deployed
+# image contains only what the service needs at runtime.
+#   local / CI:  pip install -r requirements-dev.txt
+#   production:  pip install -r requirements.txt   (what Render runs)
+-r requirements.txt
+
+pytest~=8.3.0
+httpx~=0.27.0             # transport behind FastAPI's TestClient + the integration tests
+locust~=2.32.0            # load test proving no overselling under concurrency (pulls in gevent)
