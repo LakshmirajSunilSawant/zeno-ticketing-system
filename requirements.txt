@@ -1,0 +1,20 @@
+# WHY: pinned with ~= (compatible-release) so builds are reproducible on Render but still get patch fixes.
+# Deliberately small dependency list — every package here maps to one thing I can defend in the interview.
+
+fastapi~=0.115.0          # async web framework + automatic OpenAPI/Swagger docs
+uvicorn[standard]~=0.32.0 # ASGI server; [standard] adds uvloop/httptools for throughput
+sqlalchemy~=2.0.36        # ORM + explicit transaction/locking control (with_for_update)
+pydantic~=2.9.0           # request/response validation -> automatic 422s
+email-validator~=2.2.0    # backs Pydantic's EmailStr; without it EmailStr raises at import time
+pydantic-settings~=2.6.0  # 12-factor config from env vars (DATABASE_URL, JWT_SECRET)
+python-jose[cryptography]~=3.3.0  # JWT sign/verify
+bcrypt~=4.2.0             # password hashing (used directly, NOT via passlib - see security.py)
+python-multipart~=0.0.12  # required by FastAPI for OAuth2 form login
+psycopg2-binary~=2.9.10   # PostgreSQL driver (binary wheel = no compiler needed on Render)
+slowapi~=0.1.9            # rate limiting middleware
+structlog~=24.4.0         # structured JSON logging
+
+# --- dev / test only (installed on Render too; harmless and keeps one requirements file) ---
+pytest~=8.3.0
+httpx~=0.27.0             # test client transport for FastAPI TestClient + integration tests
+locust~=2.32.0            # load test to prove no overselling under concurrency

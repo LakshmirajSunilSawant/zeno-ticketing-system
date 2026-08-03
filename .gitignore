@@ -1,0 +1,13 @@
+# WHY: secrets and local state must never reach GitHub - the .env and *.db rules are the
+# important ones; the rest is noise reduction.
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.env
+*.db
+*.db-wal
+*.db-shm
+.DS_Store
+.idea/
+.vscode/

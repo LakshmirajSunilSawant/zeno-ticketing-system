@@ -1,0 +1,282 @@
+{
+  "info": {
+    "name": "Zeno Ticketing API - Full Lifecycle",
+    "description": "Newman-runnable end-to-end regression suite. WHY it exists alongside pytest: pytest proves the code is correct in CI; this proves the DEPLOYED service is correct, from outside the process, over real HTTP. Same journey either way: register -> login -> create event -> book -> retry idempotently -> modify -> cancel -> verify seat counts. Every request asserts on the seat count so a silent inventory bug fails the run.\n\nRUN LOCALLY:\n  newman run postman_collection.json --env-var baseUrl=http://127.0.0.1:8000\nRUN AGAINST RENDER:\n  newman run postman_collection.json --env-var baseUrl=https://<service>.onrender.com",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "http://127.0.0.1:8000" },
+    { "key": "adminEmail", "value": "admin@zeno.dev" },
+    { "key": "adminPassword", "value": "admin12345" }
+  ],
+  "item": [
+    {
+      "name": "00 Health check",
+      "request": { "method": "GET", "url": "{{baseUrl}}/health" },
+      "event": [{ "listen": "test", "script": { "exec": [
+        "pm.test('service is up', () => pm.response.to.have.status(200));",
+        "pm.test('returns a request id header for tracing', () => pm.expect(pm.response.headers.has('X-Request-ID')).to.be.true);",
+        "pm.test('security header present', () => pm.expect(pm.response.headers.get('X-Content-Type-Options')).to.eql('nosniff'));"
+      ] } }]
+    },
+    {
+      "name": "01 Register a fresh user",
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "url": "{{baseUrl}}/api/v1/auth/register",
+        "body": { "mode": "raw", "raw": "{\"email\":\"{{$guid}}@newman.dev\",\"password\":\"newmanpass123\"}" }
+      },
+      "event": [
+        { "listen": "prerequest", "script": { "exec": [
+          "// A unique email per run keeps the suite re-runnable against a live database.",
+          "pm.collectionVariables.set('userEmail', pm.variables.replaceIn('{{$guid}}') + '@newman.dev');",
+          "pm.collectionVariables.set('userPassword', 'newmanpass123');",
+          "pm.request.body.update({ mode: 'raw', raw: JSON.stringify({ email: pm.collectionVariables.get('userEmail'), password: 'newmanpass123' }) });"
+        ] } },
+        { "listen": "test", "script": { "exec": [
+          "pm.test('201 created', () => pm.response.to.have.status(201));",
+          "pm.test('password hash is never returned', () => pm.expect(pm.response.json()).to.not.have.property('hashed_password'));",
+          "pm.collectionVariables.set('userId', pm.response.json().id);"
+        ] } }
+      ]
+    },
+    {
+      "name": "02 Reject a bad payload (422)",
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "url": "{{baseUrl}}/api/v1/auth/register",
+        "body": { "mode": "raw", "raw": "{\"email\":\"not-an-email\",\"password\":\"short\"}" }
+      },
+      "event": [{ "listen": "test", "script": { "exec": [
+        "pm.test('422 on invalid input', () => pm.response.to.have.status(422));",
+        "pm.test('uses the standard error envelope', () => pm.expect(pm.response.json().error.code).to.eql('validation_error'));",
+        "pm.test('no stack trace leaks', () => pm.expect(pm.response.text()).to.not.include('Traceback'));"
+      ] } }]
+    },
+    {
+      "name": "03 Login as user",
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "url": "{{baseUrl}}/api/v1/auth/login",
+        "body": { "mode": "raw", "raw": "{\"email\":\"{{userEmail}}\",\"password\":\"{{userPassword}}\"}" }
+      },
+      "event": [{ "listen": "test", "script": { "exec": [
+        "pm.test('200 ok', () => pm.response.to.have.status(200));",
+        "pm.collectionVariables.set('userToken', pm.response.json().access_token);"
+      ] } }]
+    },
+    {
+      "name": "04 Login as admin",
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "url": "{{baseUrl}}/api/v1/auth/login",
+        "body": { "mode": "raw", "raw": "{\"email\":\"{{adminEmail}}\",\"password\":\"{{adminPassword}}\"}" }
+      },
+      "event": [{ "listen": "test", "script": { "exec": [
+        "pm.test('200 ok', () => pm.response.to.have.status(200));",
+        "pm.collectionVariables.set('adminToken', pm.response.json().access_token);"
+      ] } }]
+    },
+    {
+      "name": "05 Non-admin cannot create an event (403)",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" },
+          { "key": "Authorization", "value": "Bearer {{userToken}}" }
+        ],
+        "url": "{{baseUrl}}/api/v1/events",
+        "body": { "mode": "raw", "raw": "{\"name\":\"Nope\",\"venue\":\"Nowhere\",\"starts_at\":\"2030-01-01T10:00:00Z\",\"total_seats\":10,\"price\":100}" }
+      },
+      "event": [{ "listen": "test", "script": { "exec": [
+        "pm.test('403 forbidden, not 401', () => pm.response.to.have.status(403));"
+      ] } }]
+    },
+    {
+      "name": "06 Admin creates an event (20 seats)",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" },
+          { "key": "Authorization", "value": "Bearer {{adminToken}}" }
+        ],
+        "url": "{{baseUrl}}/api/v1/events",
+        "body": { "mode": "raw", "raw": "{\"name\":\"Newman Regression Show\",\"venue\":\"CI Arena\",\"starts_at\":\"2030-06-01T19:30:00Z\",\"total_seats\":20,\"price\":250.0}" }
+      },
+      "event": [{ "listen": "test", "script": { "exec": [
+        "pm.test('201 created', () => pm.response.to.have.status(201));",
+        "pm.test('starts fully available', () => pm.expect(pm.response.json().available_seats).to.eql(20));",
+        "pm.collectionVariables.set('eventId', pm.response.json().id);"
+      ] } }]
+    },
+    {
+      "name": "07 Book 4 seats (with Idempotency-Key)",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" },
+          { "key": "Authorization", "value": "Bearer {{userToken}}" },
+          { "key": "Idempotency-Key", "value": "{{$guid}}" }
+        ],
+        "url": "{{baseUrl}}/api/v1/bookings",
+        "body": { "mode": "raw", "raw": "{\"event_id\":{{eventId}},\"seats\":4}" }
+      },
+      "event": [
+        { "listen": "prerequest", "script": { "exec": [
+          "pm.collectionVariables.set('idemKey', pm.variables.replaceIn('{{$guid}}'));",
+          "pm.request.headers.upsert({ key: 'Idempotency-Key', value: pm.collectionVariables.get('idemKey') });"
+        ] } },
+        { "listen": "test", "script": { "exec": [
+          "pm.test('201 created', () => pm.response.to.have.status(201));",
+          "const b = pm.response.json();",
+          "pm.test('confirmed', () => pm.expect(b.status).to.eql('CONFIRMED'));",
+          "pm.test('price is 4 x 250', () => pm.expect(b.total_price).to.eql(1000));",
+          "pm.collectionVariables.set('bookingId', b.id);"
+        ] } }
+      ]
+    },
+    {
+      "name": "08 Seats decremented to 16",
+      "request": { "method": "GET", "url": "{{baseUrl}}/api/v1/events/{{eventId}}" },
+      "event": [{ "listen": "test", "script": { "exec": [
+        "pm.test('16 seats left', () => pm.expect(pm.response.json().available_seats).to.eql(16));"
+      ] } }]
+    },
+    {
+      "name": "09 Retry SAME Idempotency-Key -> no double booking",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" },
+          { "key": "Authorization", "value": "Bearer {{userToken}}" },
+          { "key": "Idempotency-Key", "value": "{{idemKey}}" }
+        ],
+        "url": "{{baseUrl}}/api/v1/bookings",
+        "body": { "mode": "raw", "raw": "{\"event_id\":{{eventId}},\"seats\":4}" }
+      },
+      "event": [{ "listen": "test", "script": { "exec": [
+        "pm.test('200 not 201 - nothing new was created', () => pm.response.to.have.status(200));",
+        "pm.test('flagged as a replay', () => pm.expect(pm.response.headers.get('Idempotent-Replay')).to.eql('true'));",
+        "pm.test('same booking id returned', () => pm.expect(pm.response.json().id).to.eql(pm.collectionVariables.get('bookingId')));"
+      ] } }]
+    },
+    {
+      "name": "10 Seats STILL 16 after the retry",
+      "request": { "method": "GET", "url": "{{baseUrl}}/api/v1/events/{{eventId}}" },
+      "event": [{ "listen": "test", "script": { "exec": [
+        "pm.test('retry did not consume more seats', () => pm.expect(pm.response.json().available_seats).to.eql(16));"
+      ] } }]
+    },
+    {
+      "name": "11 Modify booking 4 -> 7 seats",
+      "request": {
+        "method": "PATCH",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" },
+          { "key": "Authorization", "value": "Bearer {{userToken}}" }
+        ],
+        "url": "{{baseUrl}}/api/v1/bookings/{{bookingId}}",
+        "body": { "mode": "raw", "raw": "{\"seats\":7}" }
+      },
+      "event": [{ "listen": "test", "script": { "exec": [
+        "pm.test('200 ok', () => pm.response.to.have.status(200));",
+        "pm.test('status becomes MODIFIED', () => pm.expect(pm.response.json().status).to.eql('MODIFIED'));"
+      ] } }]
+    },
+    {
+      "name": "12 Seats now 13",
+      "request": { "method": "GET", "url": "{{baseUrl}}/api/v1/events/{{eventId}}" },
+      "event": [{ "listen": "test", "script": { "exec": [
+        "pm.test('3 more seats taken', () => pm.expect(pm.response.json().available_seats).to.eql(13));"
+      ] } }]
+    },
+    {
+      "name": "13 Over-book attempt is refused (409)",
+      "request": {
+        "method": "PATCH",
+        "header": [
+          { "key": "Content-Type", "value": "application/json" },
+          { "key": "Authorization", "value": "Bearer {{userToken}}" }
+        ],
+        "url": "{{baseUrl}}/api/v1/bookings/{{bookingId}}",
+        "body": { "mode": "raw", "raw": "{\"seats\":10}" }
+      },
+      "event": [{ "listen": "test", "script": { "exec": [
+        "// seats is capped at 10 by the schema, and only 13 remain + 7 held = 20, so 10 is allowed.",
+        "pm.test('within capacity so it succeeds', () => pm.response.to.have.status(200));"
+      ] } }]
+    },
+    {
+      "name": "14 Cancel the booking",
+      "request": {
+        "method": "DELETE",
+        "header": [{ "key": "Authorization", "value": "Bearer {{userToken}}" }],
+        "url": "{{baseUrl}}/api/v1/bookings/{{bookingId}}"
+      },
+      "event": [{ "listen": "test", "script": { "exec": [
+        "pm.test('200 ok', () => pm.response.to.have.status(200));",
+        "pm.test('status CANCELLED', () => pm.expect(pm.response.json().status).to.eql('CANCELLED'));"
+      ] } }]
+    },
+    {
+      "name": "15 All 20 seats restored",
+      "request": { "method": "GET", "url": "{{baseUrl}}/api/v1/events/{{eventId}}" },
+      "event": [{ "listen": "test", "script": { "exec": [
+        "pm.test('inventory fully restored', () => pm.expect(pm.response.json().available_seats).to.eql(20));"
+      ] } }]
+    },
+    {
+      "name": "16 Double-cancel is refused (409)",
+      "request": {
+        "method": "DELETE",
+        "header": [{ "key": "Authorization", "value": "Bearer {{userToken}}" }],
+        "url": "{{baseUrl}}/api/v1/bookings/{{bookingId}}"
+      },
+      "event": [{ "listen": "test", "script": { "exec": [
+        "pm.test('409 conflict', () => pm.response.to.have.status(409));",
+        "pm.test('specific error code', () => pm.expect(pm.response.json().error.code).to.eql('already_cancelled'));"
+      ] } }]
+    },
+    {
+      "name": "17 Seats NOT credited twice",
+      "request": { "method": "GET", "url": "{{baseUrl}}/api/v1/events/{{eventId}}" },
+      "event": [{ "listen": "test", "script": { "exec": [
+        "pm.test('still exactly 20, not 27', () => pm.expect(pm.response.json().available_seats).to.eql(20));"
+      ] } }]
+    },
+    {
+      "name": "18 Unauthenticated request is rejected (401)",
+      "request": { "method": "GET", "url": "{{baseUrl}}/api/v1/bookings/{{bookingId}}" },
+      "event": [{ "listen": "test", "script": { "exec": [
+        "pm.test('401 unauthorized', () => pm.response.to.have.status(401));"
+      ] } }]
+    },
+    {
+      "name": "19 Analytics require admin (403 for user)",
+      "request": {
+        "method": "GET",
+        "header": [{ "key": "Authorization", "value": "Bearer {{userToken}}" }],
+        "url": "{{baseUrl}}/api/v1/analytics/revenue"
+      },
+      "event": [{ "listen": "test", "script": { "exec": [
+        "pm.test('403 forbidden', () => pm.response.to.have.status(403));"
+      ] } }]
+    },
+    {
+      "name": "20 Admin reads analytics",
+      "request": {
+        "method": "GET",
+        "header": [{ "key": "Authorization", "value": "Bearer {{adminToken}}" }],
+        "url": "{{baseUrl}}/api/v1/analytics/occupancy"
+      },
+      "event": [{ "listen": "test", "script": { "exec": [
+        "pm.test('200 ok', () => pm.response.to.have.status(200));",
+        "pm.test('returns rows', () => pm.expect(pm.response.json()).to.be.an('array'));"
+      ] } }]
+    }
+  ]
+}

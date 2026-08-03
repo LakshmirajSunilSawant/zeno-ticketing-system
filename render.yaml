@@ -1,0 +1,43 @@
+# WHY a Blueprint file instead of clicking through Render's dashboard: the deployment is code.
+# The database, the service and every env var are reviewable in git and reproducible - if the
+# service is ever deleted, this file rebuilds it exactly. Render reads this on "New > Blueprint".
+databases:
+  - name: zeno-db
+    plan: free
+    databaseName: zeno
+    user: zeno
+    # NOTE: Render's free Postgres instance expires 30 days after creation. Fine for a demo;
+    # in production this would be a paid plan with automated backups and a read replica.
+
+services:
+  - type: web
+    name: zeno-ticketing-api
+    runtime: python
+    plan: free
+    region: singapore # closest region to India - lowest latency for the demo
+    buildCommand: pip install -r requirements.txt
+    # WHY seed runs on every boot: seed.py is idempotent, so this guarantees the live demo always
+    # has an admin account and sample events without a separate manual step.
+    # WHY --workers 1: the free tier has 512MB RAM, and one worker keeps the in-memory rate-limit
+    # counter accurate. Scaling past one worker is exactly when slowapi needs a Redis backend.
+    startCommand: python seed.py && uvicorn app.main:app --host 0.0.0.0 --port $PORT --workers 1
+    healthCheckPath: /health # Render restarts the instance if this stops responding
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase: # injected by Render - never hardcoded, never in git
+          name: zeno-db
+          property: connectionString
+      - key: JWT_SECRET
+        generateValue: true # Render generates a strong secret; nobody (including me) types it in
+      - key: ENV
+        value: production # switches structlog to JSON output (see logging_config.py)
+      - key: PYTHON_VERSION
+        value: "3.11.9"
+      - key: CORS_ORIGINS
+        value: "*" # so the API is callable from any machine/browser; tighten for a real front end
+      - key: RATE_LIMIT
+        value: 100/minute
+      - key: ADMIN_EMAIL
+        sync: false # sync:false = set manually in the dashboard, never stored in this repo
+      - key: ADMIN_PASSWORD
+        sync: false
