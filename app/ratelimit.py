@@ -29,5 +29,9 @@ def rate_limit_key(request: Request) -> str:
 limiter = Limiter(
     key_func=rate_limit_key,
     default_limits=[settings.RATE_LIMIT],  # 100/minute
+    # WHY expose the headers: a well-behaved client can see its remaining budget and back off
+    # BEFORE getting throttled, instead of discovering the limit by hitting a wall.
+    headers_enabled=True,
+    retry_after="delta-seconds",  # plain seconds - easier for clients than an HTTP-date
     # storage_uri="redis://..."  <- the single change needed to make this multi-process correct
 )

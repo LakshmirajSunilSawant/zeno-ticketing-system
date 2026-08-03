@@ -97,7 +97,10 @@ async def handle_validation_error(request: Request, exc: RequestValidationError)
 
 
 @app.exception_handler(RateLimitExceeded)
-async def handle_rate_limit(request: Request, exc: RateLimitExceeded):
+def handle_rate_limit(request: Request, exc: RateLimitExceeded):
+    # WHY this one is `def` and not `async def` (the others are async): SlowAPIMiddleware resolves
+    # the handler synchronously and silently falls back to slowapi's own plain-text 429 if ours is
+    # a coroutine. Declaring it sync is what keeps rate-limit errors in the standard envelope.
     # 429 + Retry-After is the contract a well-behaved client backs off on.
     return JSONResponse(
         status_code=429,
