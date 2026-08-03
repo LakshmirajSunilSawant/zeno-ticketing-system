@@ -1,11 +1,14 @@
 # WHY one composition root: every cross-cutting concern (CORS, security headers, rate limiting,
 # error envelope, versioned router mounting) is wired in exactly one readable place.
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.openapi.docs import get_swagger_ui_html
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
 from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
 from starlette.exceptions import HTTPException as StarletteHTTPException
@@ -43,9 +46,10 @@ app = FastAPI(
     ),
     version="1.0.0",
     lifespan=lifespan,
-    # /docs and /redoc are generated from the Pydantic schemas - the docs literally cannot drift
-    # from the implementation, which is one of the main reasons for choosing FastAPI.
-    docs_url="/docs",
+    # /docs is served by a custom route below so it can use self-hosted assets; see SWAGGER_LOCAL.
+    # The spec itself is still generated from the Pydantic schemas, so the docs cannot drift from
+    # the implementation - one of the main reasons for choosing FastAPI.
+    docs_url=None,
     redoc_url="/redoc",
     openapi_url="/openapi.json",
 )
@@ -130,6 +134,35 @@ async def handle_unexpected(request: Request, exc: Exception):
     return JSONResponse(
         status_code=500,
         content=error_payload("internal_error", "An internal error occurred", _rid(request)),
+    )
+
+
+# --- API docs ---------------------------------------------------------------
+# WHY serve Swagger UI's own JS/CSS from this server instead of a CDN: FastAPI's default /docs
+# pulls ~1.5MB from cdn.jsdelivr.net at page load. If the viewer's network, corporate proxy or
+# ad-blocker blocks that CDN, the docs page renders completely blank - and the API looks broken
+# when it is perfectly healthy. Self-hosting removes a third-party dependency from the one page
+# people judge the API by. The Docker build downloads these files (see Dockerfile).
+STATIC_DIR = Path(__file__).parent / "static"
+SWAGGER_LOCAL = (STATIC_DIR / "swagger-ui-bundle.js").exists()
+
+if STATIC_DIR.is_dir():
+    app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+
+
+@app.get("/docs", include_in_schema=False)
+@limiter.exempt  # loading a docs page fires several asset requests; don't burn the caller's quota
+def swagger_ui(request: Request):
+    # Falls back to the CDN when the vendored assets aren't present, so `uvicorn app.main:app`
+    # still gives working docs on a bare checkout without running the Docker build first.
+    cdn = "https://cdn.jsdelivr.net/npm/swagger-ui-dist@5"
+    return get_swagger_ui_html(
+        openapi_url=app.openapi_url,
+        title=f"{app.title} - Swagger UI",
+        swagger_js_url="/static/swagger-ui-bundle.js" if SWAGGER_LOCAL else f"{cdn}/swagger-ui-bundle.js",
+        swagger_css_url="/static/swagger-ui.css" if SWAGGER_LOCAL else f"{cdn}/swagger-ui.css",
+        # Default is an external favicon on fastapi.tiangolo.com - another needless third-party call.
+        swagger_favicon_url="/static/favicon-32x32.png" if SWAGGER_LOCAL else f"{cdn}/favicon-32x32.png",
     )
 
 

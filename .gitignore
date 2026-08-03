@@ -11,3 +11,6 @@ __pycache__/
 .DS_Store
 .idea/
 .vscode/
+
+# Swagger UI assets are downloaded during the Docker build, not committed (1.5MB of vendor JS).
+app/static/

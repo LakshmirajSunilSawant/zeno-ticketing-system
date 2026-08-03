@@ -4,10 +4,10 @@ A BookMyShow-style ticketing backend. Users browse events, book seats, modify an
 The whole design turns on one hard requirement: **an event must never sell more seats than it has**,
 even when hundreds of people click "Book" on the last seat at the same instant.
 
-**Live:** `http://<ec2-public-ip>` · **Interactive docs:** `/docs` · **Health:** `/health`
+**Live:** `http://65.2.107.97` · **Interactive docs:** `/docs` · **Health:** `/health`
 
 ```bash
-curl http://<ec2-public-ip>/api/v1/events
+curl http://65.2.107.97/api/v1/events
 ```
 
 ---
@@ -351,7 +351,7 @@ analytics correctness, and that `/docs` is served.
 lifecycle from *outside* the process, so it can be pointed at the deployed service:
 
 ```bash
-newman run postman_collection.json --env-var baseUrl=http://<ec2-public-ip>
+newman run postman_collection.json --env-var baseUrl=http://65.2.107.97
 ```
 
 Tests use a temporary **file-based** SQLite database, not `:memory:` — an in-memory database lives

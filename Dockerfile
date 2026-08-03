@@ -22,6 +22,17 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install -r requirements.txt
 
+# Vendor Swagger UI's assets into the image so /docs has ZERO third-party dependencies at runtime.
+# WHY it matters: the default /docs pulls 1.5MB from a CDN on page load, so a blocked CDN renders
+# the docs blank even though the API is healthy. WHY here, before `COPY . .`: this layer only
+# rebuilds when the URLs change, and Docker's COPY merges directories so the files survive.
+# WHY urllib and not curl: the slim image has no curl, and installing one just to fetch two files
+# would add an apt layer for nothing.
+RUN mkdir -p /app/app/static && python -c "\
+import urllib.request as u; \
+b='https://cdn.jsdelivr.net/npm/swagger-ui-dist@5/'; \
+[u.urlretrieve(b+n, '/app/app/static/'+n) for n in ('swagger-ui-bundle.js','swagger-ui.css','favicon-32x32.png')]"
+
 COPY . .
 
 # WHY a non-root user: if the app is ever compromised, the attacker lands as an unprivileged user
