@@ -1,0 +1,9 @@
+# WHY: this repo is authored on Windows but every script in it runs on Linux (EC2, Docker).
+# A shell script checked out with CRLF fails with "bad interpreter: /bin/bash^M", which is a
+# baffling error to debug over SSH. Forcing LF on the files that Linux executes removes that
+# entire class of problem.
+*.sh        text eol=lf
+Dockerfile  text eol=lf
+*.yml       text eol=lf
+*.yaml      text eol=lf
+Procfile    text eol=lf
