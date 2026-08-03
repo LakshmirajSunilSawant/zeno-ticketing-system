@@ -1,0 +1,64 @@
+# WHY compose on a single EC2 instance: it runs the API and Postgres as one unit with restart
+# policies and a dependency order, for $0 on the free tier. The honest trade-off, which I'd raise
+# before an interviewer does: co-locating the database means no managed backups, no point-in-time
+# recovery and no failover - in production this would be RDS, and the ONLY change needed is
+# pointing DATABASE_URL at the RDS endpoint and deleting the `db` service below.
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: zeno
+      POSTGRES_DB: zeno
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in .env}
+    volumes:
+      # WHY a named volume: the container is disposable, the data is not. `docker compose down`
+      # and a redeploy keep the bookings; only `down -v` destroys them.
+      - pgdata:/var/lib/postgresql/data
+    # NOTE: there is deliberately NO `ports:` mapping here. Postgres is reachable only on the
+    # internal Docker network as hostname `db`. Nothing on the internet can open a connection to
+    # 5432, so the database is not part of the attack surface at all.
+    healthcheck:
+      # WHY a healthcheck and not just depends_on: Postgres accepts TCP connections seconds before
+      # it can actually serve queries. Without this, seed.py races the database on first boot.
+      test: ["CMD-SHELL", "pg_isready -U zeno -d zeno"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build: .
+    restart: unless-stopped
+    ports:
+      # host:container - defaults to 80 so the demo URL needs no port suffix. Overridable via
+      # API_PORT because port 80 is often already taken on a dev laptop, and being unable to run
+      # the exact production stack locally is how deploy-day surprises happen.
+      - "${API_PORT:-80}:8000"
+    environment:
+      # `db` resolves via Docker's internal DNS - no IPs hardcoded anywhere.
+      DATABASE_URL: postgresql://zeno:${POSTGRES_PASSWORD}@db:5432/zeno
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET must be set in .env}
+      ENV: production          # switches structlog to JSON output
+      CORS_ORIGINS: "*"        # callable from any machine in the world
+      RATE_LIMIT: 100/minute
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@zeno.dev}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?ADMIN_PASSWORD must be set in .env}
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      # Uses Python because the slim image has no curl - avoids installing a package just to probe.
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    logging:
+      # WHY capped logs: an uncapped json-file driver will happily fill an 8 GB EBS volume and take
+      # the instance down. This is the single most common way a small box dies in production.
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+
+volumes:
+  pgdata:

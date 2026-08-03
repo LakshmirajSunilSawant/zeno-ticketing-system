@@ -70,7 +70,10 @@ class TicketBuyer(HttpUser):
     def browse_events(self):
         """A little read traffic alongside the writes - reads must stay fast while a hot event is
         being contended, which is the point of locking one ROW rather than the table."""
-        self.client.get(f"{API}/events", name="GET /events")
+        with self.client.get(f"{API}/events", name="GET /events", catch_response=True) as r:
+            # A 429 here is the rate limiter doing its job at 100 req/min, not a defect. Without
+            # this the failure column fills with expected throttling and hides real problems.
+            r.success() if r.status_code in (200, 429) else r.failure(f"unexpected {r.status_code}")
 
 
 @events.test_stop.add_listener

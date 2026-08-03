@@ -1,0 +1,18 @@
+# WHY: everything here would otherwise be copied into the image, bloating it and - in the case of
+# .env and *.db - baking local secrets and local data into a deployable artifact.
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.git/
+.github/
+.env
+*.db
+*.db-wal
+*.db-shm
+tests/
+locustfile.py
+postman_collection.json
+README.md
+.idea/
+.vscode/
